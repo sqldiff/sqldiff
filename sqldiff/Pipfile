@@ -1,0 +1,9 @@
+[dev-packages]
+flake8 = "==6.1.0"
+pytest = "==7.4.2"
+
+[packages]
+sqlparse = "==0.4.4"
+
+[requires]
+python_version = "*"
