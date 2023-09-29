@@ -1,8 +1,8 @@
 import sqlparse
+from sqlparse import filters
 from sqlparse.sql import Identifier, Parenthesis, Statement, Token
-from sqlparse.tokens import Keyword, Punctuation
+from sqlparse.tokens import Keyword, Operator, Punctuation, Whitespace
 from typing import Dict, List
-
 
 
 class CreateTableColumn():
@@ -25,7 +25,7 @@ class CreateTableClause():
             if token.ttype == Punctuation:
                 _, column_name_token = column_tokens.token_next(column_left_index, skip_cm=True)
                 self.columns[column_name_token.value] = CreateTableColumn(
-                    column_tokens.tokens[column_left_index:index])
+                    column_tokens.tokens[column_left_index:index+1])
                 column_left_index = index + 2
 
     def add_columns(self, base_create_table_clause) -> List[CreateTableColumn]:
@@ -45,11 +45,20 @@ class CreateTableClause():
 
 
 class Clauses():
+
+    sql_filters = [
+        filters.StripCommentsFilter(),
+        filters.StripWhitespaceFilter(),
+        filters.SpacesAroundOperatorsFilter()
+    ]
+
     def __init__(self, statements):
         self.tables: Dict[str, CreateTableClause] = {}
         self.indices = {}
 
         for statement in statements:
+            for sql_filter in self.sql_filters:
+                sql_filter.process(statement)
 
             index, create_token = statement.token_next(0, skip_cm=True)
             if create_token.ttype != Keyword.DDL or create_token.value != "CREATE":
@@ -78,24 +87,32 @@ class Clauses():
         sql = ""
         for table_name, create_table_clause in self.tables.items():
             if table_name not in base_clauses.tables:
-                sql += create_table_clause.statement.value
+                sql += str(create_table_clause.statement) + "\n"
             else:
                 add_columns = create_table_clause.add_columns(base_clauses.tables[table_name])
-                statement = sqlparse.parse("ALTER TABLE ")[0]
+                statement = sqlparse.parse("ALTER TABLE")[0]
+                statement.tokens.append(Token(Whitespace, ' '))
                 statement.tokens.append(create_table_clause.table_name_token)
-                for add_column in add_columns:
-                    statement.tokens.append(sqlparse.parse("\nADD")[0])
+                statement.tokens.append(Token(Whitespace, ' '))
+
+                for add_column in add_columns[:-1]:
+                    statement.tokens.append(sqlparse.parse("ADD")[0])
                     statement.tokens.extend(add_column.token_list)
-                # statement.tokens = statement.tokens[:5] + add_columns.
-                # statement.insert_after(3, create_table_clause.table_name_token)
-                sql += str(statement)
+                    statement.tokens.extend([Token(Operator, ','), Token(Whitespace, ' ')])
+                add_column = add_columns[-1]
+                statement.tokens.append(sqlparse.parse("ADD")[0])
+                statement.tokens.extend(add_column.token_list)
+                statement.tokens.append(Token(Operator, ';'))
+
+                sql += str(statement) + "\n"
 
         for table_name, create_table_clause in base_clauses.tables.items():
             if table_name not in self.tables:
-                statement = sqlparse.parse("DROP TABLE ;")[0]
-                statement.tokens.insert(4, create_table_clause.table_name_token)
-                # statement.insert_after(3, create_table_clause.table_name_token)
-                sql += str(statement)
+                statement = sqlparse.parse("DROP TABLE")[0]
+                statement.tokens.append(Token(Whitespace, ' '))
+                statement.tokens.append(create_table_clause.table_name_token)
+                statement.tokens.append(Token(Operator, ';'))
+                sql += str(statement) + "\n"
 
         return sql
 
